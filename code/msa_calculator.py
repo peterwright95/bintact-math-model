@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from collections import Counter, deque, defaultdict
 from helper_functions import plot_patches
 import pickle
+import os
 
 
 
@@ -17,14 +18,16 @@ class MSA_Calculator():
                  extended_area_roads_path, 
                  project_area_path = None) -> None:
 
-        self.pre_processor = PreProcessor(land_use_raster_path, roads_raster_path)
-        self.pre_processor.pre_process()
+        # self.pre_processor = PreProcessor(land_use_raster_path, roads_raster_path)
+        # self.pre_processor.pre_process()
 
         # open the pre_processor object from a file with a pickle
-        # with open('results/pre_processor.pkl', 'rb') as f:
-        #     self.pre_processor = pickle.load(f)
+        with open('/Users/peter/Documents/b-intact-math-model/results/pre_processor.pkl', 'rb') as f:
+            self.pre_processor = pickle.load(f)
         
         # save the pre_processor object to a file with a pickle, no method to save the object to a file
+        # create the results folder if it doesn't exist
+        os.makedirs('results', exist_ok=True)
         with open('results/pre_processor.pkl', 'wb') as f:
             pickle.dump(self.pre_processor, f)
     
@@ -67,6 +70,7 @@ class MSA_Calculator():
     def calculate_MSA_LU(self):
 
         # Recode land use raster values
+        self.pre_processor.write_raster('output', 'before_msa_lu', self.pre_processor.bintanct_lu, self.pre_processor.land_use_meta)
         MSA_LU = self.pre_processor.recode_raster_values(self.pre_processor.bintanct_lu, MSALU_Ref)
 
         return MSA_LU
@@ -88,6 +92,8 @@ class MSA_Calculator():
         MSA_I = np.zeros(self.pre_processor.fragmentation_lu.shape, dtype=np.float32)
 
         mask = (self.pre_processor.fragmentation_lu == 1) & (self.pre_processor.roads_array_buffered > 0)
+        
+        self.pre_processor.write_raster('output', 'roads_array_buffered', self.pre_processor.roads_array_buffered, self.pre_processor.land_use_meta)
 
         MSA_I[mask] = 0.78
         MSA_I[(self.pre_processor.fragmentation_lu == 0) | ((self.pre_processor.fragmentation_lu == 1) & (self.pre_processor.roads_array_buffered <= 0))] = 1
@@ -287,6 +293,8 @@ class MSA_Calculator():
         landscape = Landscape(self.pre_processor.infra_fragmentation_lu, self.pre_processor.cell_area_per_hectare)
 
         class_1_labels = landscape.class_label(class_val)
+        self.pre_processor.write_raster('output', 'patches', class_1_labels, self.pre_processor.land_use_meta)
+        
         class_1_patch_areas = landscape.compute_patch_areas(class_1_labels)
         class_1_labels = class_1_labels.astype(np.float32)
 
@@ -301,6 +309,7 @@ class MSA_Calculator():
         if boundary_patches:
             landscape_extended = Landscape(self.extended_area_infra_frag_lu_array, self.pre_processor.cell_area_per_hectare)
             class_1_labels_extended = landscape_extended.class_label(class_val)
+            self.pre_processor.write_raster('output', 'patches_extended', class_1_labels_extended, self.pre_processor.land_use_meta)
             class_1_patch_areas_extended = landscape_extended.compute_patch_areas(class_1_labels_extended)
             class_1_labels_extended = class_1_labels_extended.astype(np.float32)
             class_1_labels_extended[class_1_labels_extended == 0] = np.nan
@@ -334,9 +343,11 @@ class MSA_Calculator():
 
             class_1_patch_areas = class_1_patch_areas_reassigned   
 
+        self.pre_processor.write_raster('output', 'patches_after_boundary_assignment', class_1_labels, self.pre_processor.land_use_meta)
         radius = 1 # distance from the pixel to consider when calculating the most frequent patch
         class_1_labels_new = assign_roads_to_patches(class_1_labels, roads_array, class_1_patch_areas, radius, self.pre_processor)
-
+        self.pre_processor.write_raster('output', 'patches_reassigned', class_1_labels_new, self.pre_processor.land_use_meta)
+        
         # TODO: We are reassigning the roads in the scope to the patches, but we are not updating the patch areas (so the added area of the roads is not considered)
         labels = np.unique(class_1_labels_new)
         labels = labels[~np.isnan(labels)]
@@ -354,6 +365,7 @@ class MSA_Calculator():
             mask = class_1_labels_new == label
             patch_area_values_in_hectares[mask] = class_1_patch_areas[label]     
         
+        self.pre_processor.write_raster('output', 'patch_areas', patch_area_values_in_hectares, self.pre_processor.land_use_meta)
         conditions = [
             (patch_area_values_in_hectares == 0), # the patch areais always 0 for artificial LU categories 
             (patch_area_values_in_hectares >= 0) & (patch_area_values_in_hectares < 100),
@@ -383,6 +395,7 @@ class MSA_Calculator():
     def calculate_MSA_human_encroachment(self, land_use_array):
         # Create a mask for filtering cropland/urbanland
         mask = np.isin(self.pre_processor.bintanct_lu, Artificial_LU_values_HE)
+        self.pre_processor.write_raster('output', 'msa_he_mask', mask, self.pre_processor.land_use_meta)
 
         total_area_ha = self.pre_processor.cell_area_per_hectare * self.pre_processor.land_use_array.size
         total_area_mask_ha = np.sum(mask) * self.pre_processor.cell_area_per_hectare
@@ -413,7 +426,7 @@ class MSA_Calculator():
         """
         # Calculate intermediate MSA product for each pixel
         MSA_Pixel = self.MSA_LU * self.MSA_I * self.MSA_F * self.MSA_HE
-
+        
         total_pixel_notNA = np.sum(~np.isnan(MSA_Pixel))
         total_area_final = total_pixel_notNA * self.pre_processor.cell_area_per_hectare
 
@@ -421,7 +434,7 @@ class MSA_Calculator():
         #sum_non_na = np.sum(MSA_Pixel)
 
         # to calculate the MSA Aggregate i.e. the Mean MSA for the area, the approach that we used is make an average 
-        #between all the values of the MSA at pixel level. 
+        # between all the values of the MSA at pixel level. 
         # Therefore the sum of all the values in the pixel is divided by the total number of pixels and not the total area
         MSA_Aggregate = sum_non_na / total_pixel_notNA
         
@@ -499,7 +512,8 @@ if __name__ == "__main__":
     land_use_raster_path_extended = ''
     roads_raster_or_shp_path_extended = ''
     ################################################################################################################
-    
+
+    # EXTENDED AREA PRE-ANALYSIS
     pre_processor_extended = PreProcessor(land_use_raster_path_extended, roads_raster_or_shp_path_extended, evaluate_buffered=False)
     pre_processor_extended.pre_process()
 
@@ -513,9 +527,11 @@ if __name__ == "__main__":
                                         pre_processor_extended.roads_array, 
                                         pre_processor_extended.land_use_meta)
     
-    extended_area_infra_frag_lu_path = 'results/infra_frag_lu_extended.tif'
-    extended_area_roads_path = 'results/roads_extended.tif'
-
+    extended_area_infra_frag_lu_path = '/Users/peter/Documents/MSA R Code/results/infra_frag_lu_extended.tif'
+    extended_area_roads_path =  '/Users/peter/Documents/MSA R Code/results/roads_extended.tif'
+    
+    
+    # AREA OF ANALYSIS COMPUTATION
     calculator = MSA_Calculator(land_use_raster_path, 
                                 roads_raster_or_shp_path, 
                                 extended_area_infra_frag_lu_path, 

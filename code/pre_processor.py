@@ -77,12 +77,20 @@ class PreProcessor:
 
         # Recode ESA land use to B-Intact land use
         self.bintanct_lu = self.recode_raster_values(self.land_use_array, BIntact_recode)
+        self.write_raster('output', 'BIntact', self.bintanct_lu, self.land_use_meta)
+        
+        self.write_raster('output', 'roads', self.roads_array, self.roads_meta)
+        self.write_raster('output', 'roads_buffered', self.roads_array_buffered, self.roads_meta)
+        
         self.mask_for_area = np.isin(self.land_use_array, ESA_Class, invert=True)
 
         # Recode ESA land use to Fragmentation land classes
         self.fragmentation_lu = self.recode_raster_values(self.land_use_array, Frag_recode)
+        self.write_raster('output', 'Fragmentation_lu', self.fragmentation_lu, self.land_use_meta)
         self.fragmentation_i = self.introduce_na_values_in_fragmentation_layer(self.roads_array, self.fragmentation_lu, na_value=np.nan)
+        self.write_raster('output', 'Fragmentation_i', self.fragmentation_i, self.land_use_meta)
         self.infra_fragmentation_lu = self.create_infra_fragmentation_lu()
+        self.write_raster('output', 'Infra_Fragmentation_lu', self.infra_fragmentation_lu, self.land_use_meta)
 
         # Get cell area from land use metadata
         self.cell_area = self.get_cell_area_from_land_use_meta(self.land_use_meta)
