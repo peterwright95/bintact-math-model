@@ -22,6 +22,10 @@ class PreProcessor:
         self.evaluate_buffered = evaluate_buffered
 
     def pre_process(self,):
+        
+        # NOTE: This was developed with limited knowledge of the final inputs and outputs. The team was working on pre-computing a roads raster from all shapefiles for the world
+        # While I have developed a method for buffering of a road raster, I believe the best approach is to also pre-compute a buffered roads raster from the shapefiles. 
+        # This would save time in the pre-processing step of the model, and keep the code simpler. At that point we would basically only have clipping of rasters to do here.
         self.roads_raster_or_shape_path = self.roads_raster_or_shape_path
         self.project_area_path = self.project_area_path
 
@@ -41,6 +45,11 @@ class PreProcessor:
                     self.roads_meta
                 ) = self.clip_input_raster_with_project_area(self.roads_raster_or_shape_path, self.project_area_path)
                 self.roads_array, self.roads_transform, self.roads_meta = self.resample_roads_raster_to_match_lu(self.roads_array, self.land_use_meta, self.roads_meta)
+                
+                buffer_distance_m = 1000
+                pixel_width_m = self.land_use_meta['transform'][0]
+                buffer_distance_pixels = int(round(buffer_distance_m / pixel_width_m))
+                self.roads_array_buffered = self.binary_buffer_raster(self.roads_array, buffer_distance_pixels)
 
             elif self.roads_raster_or_shape_path.endswith('.shp'):
                 (
@@ -65,6 +74,11 @@ class PreProcessor:
                     self.roads_meta
                 ) = self.extract_raster_info(self.roads_raster_or_shape_path)
                 self.roads_array, self.roads_transform, self.roads_meta = self.resample_roads_raster_to_match_lu(self.roads_array, self.land_use_meta, self.roads_meta)
+                
+                buffer_distance_m = 1000
+                pixel_width_m = self.land_use_meta['transform'][0]
+                buffer_distance_pixels = int(round(buffer_distance_m / pixel_width_m))
+                self.roads_array_buffered = self.binary_buffer_raster(self.roads_array, buffer_distance_pixels)
             elif self.roads_raster_or_shape_path.endswith('.shp'):
                 (   
                     self.roads_array, 
@@ -79,8 +93,9 @@ class PreProcessor:
         self.bintanct_lu = self.recode_raster_values(self.land_use_array, BIntact_recode)
         self.write_raster('output', 'BIntact', self.bintanct_lu, self.land_use_meta)
         
-        self.write_raster('output', 'roads', self.roads_array, self.roads_meta)
-        self.write_raster('output', 'roads_buffered', self.roads_array_buffered, self.roads_meta)
+        if self.roads_raster_or_shape_path.endswith('.shp'):
+            self.write_raster('output', 'roads', self.roads_array, self.roads_meta)
+            self.write_raster('output', 'roads_buffered', self.roads_array_buffered, self.roads_meta)
         
         self.mask_for_area = np.isin(self.land_use_array, ESA_Class, invert=True)
 
@@ -95,6 +110,30 @@ class PreProcessor:
         # Get cell area from land use metadata
         self.cell_area = self.get_cell_area_from_land_use_meta(self.land_use_meta)
         self.cell_area_per_hectare = self.cell_area / 10000
+
+    @staticmethod
+    def binary_buffer_raster(raster_array, buffer_distance_pixels):
+        """
+        Applies a binary buffer to a raster array.
+
+        Parameters:
+        - raster_array (np.ndarray): The input raster array.
+        - buffer_distance_pixels (int): The buffer distance in pixels.
+
+        Returns:
+        - np.ndarray: The buffered raster array.
+        """
+        # Create a binary mask where the raster has values
+        binary_mask = raster_array > 0
+        
+        # Create a structuring element for the buffer
+        structure = ndimage.generate_binary_structure(2, 1)
+        
+        # Erode the inverse of the mask
+        buffered_mask = ndimage.binary_erosion(np.logical_not(binary_mask), structure=structure, iterations=buffer_distance_pixels)
+        
+        # Invert the result to get the buffered area
+        return np.logical_not(buffered_mask).astype(raster_array.dtype)
 
     @staticmethod
     def clip_input_raster_with_project_area(raster_path, projectarea_path):
@@ -342,6 +381,7 @@ class PreProcessor:
         plt.show()
 
 class Landscape:
+    
     """
     A class to represent the project area landscape and perform operations such as patch labeling and area calculations.
     A patch is a homogenous group of a land use. i.e., adjacent and touching pixels of the same land use are grouped as a patch. 
